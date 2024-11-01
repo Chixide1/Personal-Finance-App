@@ -9,6 +9,8 @@ using System.Transactions;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
 using System.Text.Json.Nodes;
+using System.Net.Mime;
+using Going.Plaid.Item;
 
 namespace PersonalFinanceApp.Server.Controllers
 {
@@ -31,32 +33,67 @@ namespace PersonalFinanceApp.Server.Controllers
         }
 
         [HttpGet("GetLinkToken")]
-        [ProducesResponseType(typeof(string), StatusCodes.Status200OK)]
-        [ProducesResponseType(StatusCodes.Status400BadRequest)]
-        public async Task<string> GetLinkToken()
+        [ProducesResponseType(typeof(string), StatusCodes.Status200OK, contentType: "application/json")]
+        [ProducesResponseType(typeof(PlaidError), StatusCodes.Status400BadRequest,contentType: "application/json")]
+        public async Task<IActionResult> GetLinkToken()
         {
-            var response = await _client.LinkTokenCreateAsync(new LinkTokenCreateRequest()
+            try
             {
-                User = new LinkTokenCreateRequestUser { ClientUserId = Guid.NewGuid().ToString(), },
-                ClientName = "Personal Finance App",
-                Products = [Products.Auth, Products.Identity, Products.Transactions],
-                Language = Language.English,
-                CountryCodes = [CountryCode.Gb],
-            });
+                var response = await _client.LinkTokenCreateAsync(new LinkTokenCreateRequest()
+                {
+                    User = new LinkTokenCreateRequestUser { ClientUserId = Guid.NewGuid().ToString(), },
+                    ClientName = "Personal Finance App",
+                    Products = [Products.Auth, Products.Identity, Products.Transactions],
+                    Language = Language.English,
+                    CountryCodes = [CountryCode.Gb],
+                });
 
-            if(response.StatusCode == HttpStatusCode.OK)
-            {
+                if (response.Error != null)
+                {
+                    dynamic error = JsonNode.Parse(JsonSerializer.Serialize(response.Error))!;
+                    string msg = (string)error["error_message"];
+
+                    _logger.LogError(msg);
+                    return StatusCode(StatusCodes.Status400BadRequest, response);
+                }
+
                 _logger.LogInformation("Successfully obtained link token: {token}", response.LinkToken);
+                return Ok(response.LinkToken);
             }
-            else if(response.Error != null)
+            catch (Exception ex)
             {
-                dynamic error = JsonNode.Parse(JsonSerializer.Serialize(response.Error));
-                string msg = (string)error["error_message"];
-
-                _logger.LogError(msg);
+                return BadRequest(ex.Message);
             }
+        }
 
-            return response.LinkToken;
+
+        [HttpPost("GetAccessToken")]
+        [ProducesResponseType(typeof(string), StatusCodes.Status200OK, contentType: "application/json")]
+        [ProducesResponseType(typeof(PlaidError), StatusCodes.Status400BadRequest, contentType: "application/json")]
+        public async Task<IActionResult> GetAccessToken([FromBody]string publicToken)
+        {
+            try
+            {
+                var response = await _client.ItemPublicTokenExchangeAsync(new ItemPublicTokenExchangeRequest()
+                {
+                    PublicToken = publicToken
+                });
+
+                if (response.Error != null)
+                {
+                    dynamic error = JsonNode.Parse(JsonSerializer.Serialize(response.Error))!;
+                    string msg = (string)error["error_message"];
+
+                    _logger.LogError(msg);
+                    return StatusCode(StatusCodes.Status400BadRequest, response);
+                }
+
+                return Ok(response);
+            }
+            catch (Exception ex)
+            {
+                return BadRequest(ex);
+            }
         }
     }
 }
